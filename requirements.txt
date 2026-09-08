@@ -9,6 +9,9 @@ openpyxl>=3.9.0
 # Parquet support
 pyarrow>=12.0.0
 
+# Technical Analysis (Stage 3)
+# Built-in with numpy/pandas, no additional dependencies needed
+
 # Future stages
 # scikit-learn>=1.3.0
 # plotly>=5.14.0

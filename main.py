@@ -40,6 +40,21 @@ logger = setup_logger(
 )
 
 
+def remove_timezone(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove timezone information from datetime index for Excel compatibility.
+    
+    Args:
+        df (pd.DataFrame): DataFrame with timezone-aware datetime index.
+        
+    Returns:
+        pd.DataFrame: DataFrame with timezone-naive datetime index.
+    """
+    if hasattr(df.index, 'tz') and df.index.tz is not None:
+        df = df.copy()
+        df.index = df.index.tz_localize(None)
+    return df
+
+
 def validate_and_report(df: pd.DataFrame, ticker: str) -> tuple:
     """Validate data and generate quality report.
     
@@ -82,18 +97,13 @@ def save_data(df: pd.DataFrame, ticker: str) -> int:
     """
     saved_count = 0
     
-    # Save to Excel
-    excel_path = OUTPUT_DIR / f"{OUTPUT_FILENAME}.xlsx"
-    if not excel_path.exists():
-        # Create new workbook
-        pd.DataFrame().to_excel(excel_path)
-    
-    # For Excel, we'll build a dictionary and save all at once later
+    # Remove timezone for Excel compatibility
+    df_for_excel = remove_timezone(df)
     
     # Save to CSV if configured
     if SAVE_ALL_FORMATS or OUTPUT_FORMAT == 'csv':
         csv_path = OUTPUT_DIR / f"{OUTPUT_FILENAME}_{ticker}.csv"
-        if DataStorage.save_single(df, csv_path, format='csv'):
+        if DataStorage.save_single(df_for_excel, csv_path, format='csv'):
             saved_count += 1
     
     # Save to Parquet if configured
@@ -102,7 +112,7 @@ def save_data(df: pd.DataFrame, ticker: str) -> int:
         if DataStorage.save_single(df, parquet_path, format='parquet'):
             saved_count += 1
     
-    return saved_count
+    return saved_count, df_for_excel
 
 
 def main():
@@ -163,11 +173,11 @@ def main():
             logger.info(f"{ticker}: Date range: {qual_report['date_range']['start']} to {qual_report['date_range']['end']}")
             
             # Save data
-            save_count = save_data(data, ticker)
+            save_count, df_for_excel = save_data(data, ticker)
             logger.info(f"{ticker}: Saved to {save_count} format(s)")
             
-            # Store for Excel workbook
-            excel_data[ticker] = data
+            # Store for Excel workbook (using timezone-naive version)
+            excel_data[ticker] = df_for_excel
         
         # Save Excel workbook with all tickers
         logger.info(f"\nCreating Excel workbook with all tickers...")

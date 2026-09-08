@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Main entry point for AI Financial Analyzer.
 
-This script orchestrates the complete data collection, validation, technical analysis, and storage pipeline.
-It fetches historical price data, validates quality, calculates technical indicators, and exports results.
+This script orchestrates the complete data collection, validation, technical analysis,
+fundamental analysis, and storage pipeline.
 
 Usage:
     python main.py
@@ -30,6 +30,7 @@ from src.data_collection import YahooFinanceFetcher
 from src.data_validation import DataValidator, DataQualityMetrics
 from src.data_storage import DataStorage
 from src.technical_analysis import TechnicalIndicators, ReturnsMetrics
+from src.fundamental_analysis import FinancialStatements, FinancialRatios, ValuationMetrics
 from src.utils import setup_logger
 
 
@@ -67,16 +68,10 @@ def validate_and_report(df: pd.DataFrame, ticker: str) -> tuple:
     Returns:
         tuple: (is_valid, validation_report, quality_report)
     """
-    # Initialize validator
     validator = DataValidator(threshold_missing=VALIDATION_THRESHOLD_MISSING)
-    
-    # Run validation
     is_valid, validation_report = validator.validate_ohlcv_data(df, ticker)
-    
-    # Generate quality metrics
     quality_report = DataQualityMetrics.generate_quality_report(df, ticker)
     
-    # Log results
     if is_valid:
         logger.info(f"{ticker}: ✓ All validation checks passed")
     else:
@@ -98,11 +93,8 @@ def calculate_technical_indicators(df: pd.DataFrame, ticker: str) -> pd.DataFram
         pd.DataFrame: DataFrame with added indicator columns.
     """
     logger.info(f"{ticker}: Calculating technical indicators...")
-    
     df = TechnicalIndicators.add_all_indicators(df)
-    
-    logger.info(f"{ticker}: Added moving averages, momentum, volatility, and stochastic indicators")
-    
+    logger.info(f"{ticker}: Technical indicators calculated")
     return df
 
 
@@ -117,15 +109,52 @@ def calculate_returns_metrics(prices: pd.Series, ticker: str) -> dict:
         dict: Returns and risk metrics report.
     """
     logger.info(f"{ticker}: Calculating returns and risk metrics...")
-    
     report = ReturnsMetrics.generate_returns_report(prices, ticker)
-    
     logger.info(f"{ticker}: Total Return: {report['total_return_pct']:.2f}%")
-    logger.info(f"{ticker}: Volatility: {report['volatility_pct']:.2f}%")
-    logger.info(f"{ticker}: Sharpe Ratio: {report['sharpe_ratio']:.2f}")
-    logger.info(f"{ticker}: Max Drawdown: {report['maximum_drawdown_pct']:.2f}%")
-    
     return report
+
+
+def get_fundamental_analysis(ticker: str) -> dict:
+    """Get fundamental analysis data.
+    
+    Args:
+        ticker (str): Stock ticker symbol.
+        
+    Returns:
+        dict: Fundamental analysis results.
+    """
+    logger.info(f"{ticker}: Fetching financial statements...")
+    
+    fundamental = {
+        'financial_statements': {},
+        'financial_ratios': {},
+        'valuation': {},
+    }
+    
+    try:
+        # Get financial statements
+        statements = FinancialStatements.get_all_statements(ticker, quarterly=False)
+        
+        if statements['income_statement'] is not None and statements['balance_sheet'] is not None:
+            # Generate ratio report
+            ratio_report = FinancialRatios.generate_ratio_report(
+                ticker,
+                statements['income_statement'],
+                statements['balance_sheet'],
+                statements['cashflow'] if statements['cashflow'] is not None else pd.DataFrame()
+            )
+            fundamental['financial_ratios'] = ratio_report
+            logger.info(f"{ticker}: Financial ratios calculated")
+        
+        # Get valuation metrics
+        valuation_report = ValuationMetrics.generate_valuation_report(ticker)
+        fundamental['valuation'] = valuation_report
+        logger.info(f"{ticker}: Valuation metrics calculated")
+        
+    except Exception as e:
+        logger.warning(f"{ticker}: Fundamental analysis failed: {str(e)}")
+    
+    return fundamental
 
 
 def save_data(df: pd.DataFrame, ticker: str) -> int:
@@ -139,17 +168,13 @@ def save_data(df: pd.DataFrame, ticker: str) -> int:
         int: Number of files successfully saved.
     """
     saved_count = 0
-    
-    # Remove timezone for Excel compatibility
     df_for_excel = remove_timezone(df)
     
-    # Save to CSV if configured
     if SAVE_ALL_FORMATS or OUTPUT_FORMAT == 'csv':
         csv_path = OUTPUT_DIR / f"{OUTPUT_FILENAME}_{ticker}.csv"
         if DataStorage.save_single(df_for_excel, csv_path, format='csv'):
             saved_count += 1
     
-    # Save to Parquet if configured
     if SAVE_ALL_FORMATS or OUTPUT_FORMAT == 'parquet':
         parquet_path = OUTPUT_DIR / f"{OUTPUT_FILENAME}_{ticker}.parquet"
         if DataStorage.save_single(df, parquet_path, format='parquet'):
@@ -161,17 +186,15 @@ def save_data(df: pd.DataFrame, ticker: str) -> int:
 def main():
     """Main execution function for the complete pipeline.
     
-    This function:
-    1. Initializes the Yahoo Finance fetcher
-    2. Fetches historical data for all configured tickers
-    3. Validates data quality
-    4. Calculates technical indicators
-    5. Calculates returns and risk metrics
-    6. Saves data in multiple formats
-    7. Provides comprehensive summary
+    This function orchestrates:
+    1. Data collection
+    2. Data validation
+    3. Technical analysis
+    4. Fundamental analysis
+    5. Storage in multiple formats
     """
     logger.info("="*80)
-    logger.info("AI FINANCIAL ANALYZER - Stage 3: Technical Analysis Pipeline")
+    logger.info("AI FINANCIAL ANALYZER - Stage 4: Fundamental Analysis Pipeline")
     logger.info("="*80)
     
     try:
@@ -182,24 +205,20 @@ def main():
         
         # Fetch data for all tickers
         logger.info(f"Starting data collection for {len(TICKERS)} tickers")
-        logger.info(f"Date range: {START_DATE.date()} to {END_DATE.date()}")
-        
         all_data = fetcher.fetch_multiple_tickers(TICKERS, START_DATE, END_DATE)
         
-        # Count successful and failed fetches
         successful_fetches = sum(1 for data in all_data.values() if data is not None)
         failed_fetches = sum(1 for data in all_data.values() if data is None)
         
         logger.info(f"Data collection complete: {successful_fetches} successful, {failed_fetches} failed")
-        
-        # Process each ticker: validate, analyze, and save
-        logger.info(f"Starting validation, technical analysis, and storage process...")
+        logger.info(f"Starting comprehensive analysis pipeline...")
         
         validation_reports = {}
         quality_reports = {}
         technical_reports = {}
         returns_reports = {}
-        excel_data = {}  # For combining into one workbook
+        fundamental_reports = {}
+        excel_data = {}
         
         for ticker, data in all_data.items():
             if data is None:
@@ -208,49 +227,56 @@ def main():
             
             logger.info(f"\n--- Processing {ticker} ---")
             
-            # Validate
+            # Stage 2: Validate
             is_valid, val_report, qual_report = validate_and_report(data, ticker)
             validation_reports[ticker] = val_report
             quality_reports[ticker] = qual_report
             
-            # Log quality metrics
-            completeness = qual_report['completeness']['completeness_ratio']
-            logger.info(f"{ticker}: Data completeness: {completeness:.2%}")
-            
-            # Calculate technical indicators
+            # Stage 3: Technical Analysis
             data_with_indicators = calculate_technical_indicators(data, ticker)
             technical_reports[ticker] = data_with_indicators
             
-            # Calculate returns metrics
             returns_report = calculate_returns_metrics(data['Close'], ticker)
             returns_reports[ticker] = returns_report
+            
+            # Stage 4: Fundamental Analysis
+            fundamental_report = get_fundamental_analysis(ticker)
+            fundamental_reports[ticker] = fundamental_report
             
             # Save data
             save_count, df_for_excel = save_data(data_with_indicators, ticker)
             logger.info(f"{ticker}: Saved to {save_count} format(s)")
-            
-            # Store for Excel workbook (using timezone-naive version)
             excel_data[ticker] = df_for_excel
         
-        # Save Excel workbook with all tickers
+        # Save Excel workbook
         logger.info(f"\nCreating Excel workbook with all tickers...")
         excel_path = OUTPUT_DIR / f"{OUTPUT_FILENAME}.xlsx"
         if DataStorage.save_workbook(excel_data, excel_path):
             logger.info(f"Excel workbook saved: {excel_path}")
         
-        # Save returns reports as JSON
-        logger.info(f"Saving returns and risk metrics reports...")
+        # Save comprehensive reports
+        logger.info(f"Saving comprehensive analysis reports...")
         reports_dir = OUTPUT_DIR / "reports"
         reports_dir.mkdir(exist_ok=True)
         
-        for ticker, report in returns_reports.items():
-            report_path = reports_dir / f"{ticker}_returns_report.json"
+        # Save returns and fundamental reports
+        for ticker in returns_reports.keys():
+            # Returns report
+            returns_path = reports_dir / f"{ticker}_returns_report.json"
             try:
-                with open(report_path, 'w') as f:
-                    json.dump(report, f, indent=2)
-                logger.info(f"Returns report saved: {report_path}")
+                with open(returns_path, 'w') as f:
+                    json.dump(returns_reports[ticker], f, indent=2)
             except Exception as e:
                 logger.error(f"Failed to save returns report for {ticker}: {str(e)}")
+            
+            # Fundamental report
+            fundamental_path = reports_dir / f"{ticker}_fundamental_report.json"
+            try:
+                with open(fundamental_path, 'w') as f:
+                    json.dump(fundamental_reports[ticker], f, indent=2, default=str)
+                logger.info(f"Fundamental report saved: {fundamental_path}")
+            except Exception as e:
+                logger.error(f"Failed to save fundamental report for {ticker}: {str(e)}")
         
         # Summary
         logger.info("\n" + "="*80)
@@ -259,9 +285,8 @@ def main():
         logger.info(f"Tickers processed: {len(TICKERS)}")
         logger.info(f"Successful data fetches: {successful_fetches}")
         logger.info(f"Failed data fetches: {failed_fetches}")
-        logger.info(f"Validation checks performed: {len(validation_reports)}")
-        logger.info(f"Technical indicators calculated: {len(technical_reports)}")
-        logger.info(f"Returns reports generated: {len(returns_reports)}")
+        logger.info(f"Technical analyses performed: {len(technical_reports)}")
+        logger.info(f"Fundamental analyses performed: {len(fundamental_reports)}")
         logger.info(f"Date range: {START_DATE.date()} to {END_DATE.date()}")
         logger.info(f"\nOutput files:")
         logger.info(f"  - Excel workbook: {excel_path}")
@@ -269,7 +294,8 @@ def main():
             logger.info(f"  - CSV files: output/{OUTPUT_FILENAME}_*.csv")
         if SAVE_ALL_FORMATS or OUTPUT_FORMAT == 'parquet':
             logger.info(f"  - Parquet files: output/{OUTPUT_FILENAME}_*.parquet")
-        logger.info(f"  - Returns reports: output/reports/*_returns_report.json")
+        logger.info(f"  - Analysis reports: output/reports/*_returns_report.json")
+        logger.info(f"  - Fundamental reports: output/reports/*_fundamental_report.json")
         logger.info(f"\nLogs: {LOG_DIR / 'ai_financial_analyzer.log'}")
         logger.info("="*80)
         
